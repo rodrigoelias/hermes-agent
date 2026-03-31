@@ -55,13 +55,27 @@ def _kill_port_process(port: int) -> None:
         else:
             result = subprocess.run(
                 ["fuser", f"{port}/tcp"],
-                capture_output=True, timeout=5,
+                capture_output=True, text=True, timeout=5,
             )
             if result.returncode == 0:
                 subprocess.run(
                     ["fuser", "-k", f"{port}/tcp"],
                     capture_output=True, timeout=5,
                 )
+            else:
+                # Android/Termux can block /proc/net access for unprivileged users,
+                # causing fuser to fail with "Permission denied". Fall back to
+                # killing known WhatsApp bridge processes by command pattern.
+                stderr = result.stderr or ""
+                if "Permission denied" in stderr or result.returncode != 0:
+                    for pattern in ("whatsapp-bridge/bridge.js", "node bridge.js"):
+                        try:
+                            subprocess.run(
+                                ["pkill", "-f", pattern],
+                                capture_output=True, timeout=5,
+                            )
+                        except subprocess.SubprocessError:
+                            pass
     except Exception:
         pass
 

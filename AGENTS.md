@@ -455,6 +455,119 @@ def profile_env(tmp_path, monkeypatch):
 
 ---
 
+## Android/Termux Deployment
+
+### Problem: Native Dependencies on Bionic libc
+
+Termux (Android terminal) uses **Bionic libc**, not glibc. PyPI's manylinux wheels don't load. Hermes-agent has **14 native Python extensions** that need Android aarch64 compilation:
+
+**Rust-based** (compiled via maturin):
+- `pydantic-core==2.41.5`
+- `jiter==0.13.0`
+- `cryptography==46.0.6`
+
+**C-based**:
+- `cffi`, `aiohttp`, `PyYAML`, `MarkupSafe`, `msgpack`, and 8 transitive deps
+
+### Solution: Cross-Compile in Docker
+
+Use `termux/termux-docker:aarch64` on Apple Silicon (native arm64, no emulation) to build wheels targeting `android_24_arm64_v8a`. Key technical steps:
+
+1. **Set Android API level for maturin** (Rust-Python build tool):
+   ```bash
+   export ANDROID_API_LEVEL=24
+   ```
+
+2. **Fix DNS in container** — Android Bionic resolver doesn't work in Docker. Mount a hosts file:
+   ```bash
+   HOSTS_FILE=$(mktemp)
+   echo "127.0.0.1 localhost" > "$HOSTS_FILE"
+   echo "151.101.128.223 pypi.org" >> "$HOSTS_FILE"  # pre-resolved IPs
+   docker run -v "$HOSTS_FILE:/system/etc/hosts:ro" ...
+   ```
+
+3. **Avoid pip's dependency re-resolver** — install in 3 stages with `--no-deps`:
+   ```bash
+   # Stage 1: Native wheels
+   pip3 install android/wheels/*.whl
+   
+   # Stage 2: Pure-python deps (no re-resolution)
+   pip3 install --no-deps setuptools openai anthropic pydantic ...
+   
+   # Stage 3: hermes-agent itself
+   pip3 install --no-deps -e .
+   ```
+   
+   Without `--no-deps` in stage 2, pip downloads pydantic-core from PyPI (no android wheel) and tries to rebuild, failing without Android NDK.
+
+### Files
+
+```
+android/
+├── build.sh           # Cross-compile all 18 wheels in Docker (~3 min)
+├── install.sh         # Run on phone — installs wheels + pure-python deps
+├── deploy.sh          # Deploy over SSH (Mac to phone)
+├── wheels/            # Pre-built aarch64 wheels (6.7MB)
+└── README.md          # Full setup + phone prerequisites
+```
+
+### Quick Deploy
+
+```bash
+# On Mac: build wheels (once, or when deps change)
+./android/build.sh
+
+# Deploy to phone via SSH
+./android/deploy.sh 192.168.1.42 8022 password
+```
+
+### Phone Setup (Termux)
+
+```bash
+# Install Termux from F-Droid (not Google Play)
+# In Termux:
+pkg install openssh python git
+passwd                          # Set SSH password
+sshd                            # Start SSH server (port 8022)
+ifconfig wlan0 | grep 'inet '  # Find IP
+```
+
+### Verified: Android aarch64
+
+- **System**: Pixel phone (aarch64 Android 14)
+- **Termux**: Python 3.13.12, Rust 1.94.1
+- **Status**: ✅ Deployed & tested on a real Android/Termux device (SSH over port 8022)
+- **Working**: All imports load, `hermes --help` runs, ready for `hermes setup`
+
+### Gateway Runtime Pitfalls (Termux)
+
+If `hermes gateway` fails after install, check these two common causes:
+
+1. **Missing pure-python deps due `--no-deps` install strategy**
+   - Symptom: `ModuleNotFoundError: No module named 'websockets'`
+   - Symptom: `RequestsDependencyWarning` for missing `charset_normalizer`
+   - Fix: ensure `install.sh` includes/pins both:
+     - `websockets==16.0`
+     - `charset-normalizer==3.4.6`
+
+2. **Deploy tar accidentally excluded `tools/environments/`**
+   - Symptom: `ModuleNotFoundError: No module named 'tools.environments'`
+   - Cause: using broad tar excludes like `--exclude='environments'` also matches `tools/environments`
+   - Fix: use top-level-only excludes:
+     - `--exclude='./environments'` (not `environments`)
+     - `--exclude='./tests'`
+
+### Maintenance
+
+When hermes-agent deps change:
+1. Update pinned versions in `build.sh` (NATIVE_PKGS) + `install.sh` (PURE_DEPS)
+2. Run `./android/build.sh` to rebuild wheels
+3. Redeploy or run `./android/install.sh --upgrade` on phone
+
+See `android/README.md` for full technical details.
+
+---
+
 ## Testing
 
 ```bash
