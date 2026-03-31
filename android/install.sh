@@ -5,7 +5,8 @@
 # Run this ON the phone (inside Termux), or via deploy.sh from your Mac.
 #
 # Usage:
-#   ./install.sh                    # Full install
+#   ./install.sh                    # Full install (requires android/wheels/*.whl)
+#   ./install.sh --build-native     # Build native wheels on this phone, then install
 #   ./install.sh --deps-only        # Only install dependencies
 #   ./install.sh --upgrade          # Upgrade existing install
 #
@@ -16,10 +17,12 @@ HERMES_DIR="$(dirname "$SCRIPT_DIR")"
 WHEELS_DIR="$SCRIPT_DIR/wheels"
 
 DEPS_ONLY=false
+BUILD_NATIVE=false
 UPGRADE=""
 for arg in "$@"; do
     case "$arg" in
         --deps-only) DEPS_ONLY=true ;;
+        --build-native) BUILD_NATIVE=true ;;
         --upgrade)   UPGRADE="--upgrade" ;;
     esac
 done
@@ -28,12 +31,6 @@ echo "━━━ Hermes Agent — Termux Installer ━━━"
 echo ""
 
 # ── Check environment ──
-if [[ ! -d "$WHEELS_DIR" ]] || [[ -z "$(ls "$WHEELS_DIR"/*.whl 2>/dev/null)" ]]; then
-    echo "❌ No wheels found in $WHEELS_DIR"
-    echo "   Run ./android/build.sh on your Mac first."
-    exit 1
-fi
-
 if ! command -v python3 &>/dev/null; then
     echo "Installing Python..."
     pkg install -y python 2>&1 | tail -3
@@ -42,6 +39,49 @@ fi
 if ! command -v rg &>/dev/null; then
     echo "Installing ripgrep..."
     pkg install -y ripgrep 2>&1 | tail -1
+fi
+
+if [[ ! -d "$WHEELS_DIR" ]]; then
+    mkdir -p "$WHEELS_DIR"
+fi
+
+if [[ -z "$(ls "$WHEELS_DIR"/*.whl 2>/dev/null)" ]]; then
+    if ! $BUILD_NATIVE; then
+        echo "❌ No wheels found in $WHEELS_DIR"
+        echo "   Either:"
+        echo "   1) Run ./android/build.sh on your Mac and copy wheels"
+        echo "   2) Run this installer with --build-native"
+        exit 1
+    fi
+
+    echo "━━━ Building native wheels on this device (Termux) ━━━"
+    echo "This can take several minutes on phone CPUs..."
+
+    echo "Installing native build toolchain..."
+    pkg install -y rust binutils build-essential libffi openssl pkg-config 2>&1 | tail -5
+
+    export ANDROID_API_LEVEL=24
+    export OPENSSL_DIR="$PREFIX"
+
+    NATIVE_PKGS=(
+        "pydantic-core==2.41.5"
+        "cryptography==46.0.6"
+        "cffi==2.0.0"
+        "jiter==0.13.0"
+        "aiohttp==3.13.4"
+        "PyYAML==6.0.3"
+        "MarkupSafe==3.0.3"
+        "msgpack==1.1.2"
+    )
+
+    for pkg in "${NATIVE_PKGS[@]}"; do
+        echo "⏳ Building $pkg"
+        pip3 wheel --no-cache-dir --wheel-dir "$WHEELS_DIR" "$pkg"
+    done
+
+    echo "✅ Native wheel build complete:"
+    ls -1 "$WHEELS_DIR"/*.whl | sed 's|.*/||'
+    echo ""
 fi
 
 # ── Step 1: Native wheels ──

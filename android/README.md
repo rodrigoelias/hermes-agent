@@ -35,7 +35,12 @@ pkg install python ripgrep openssh git
 
 # Clone or copy hermes-agent to the phone, then:
 cd ~/hermes-agent
+
+# Option A: use prebuilt wheels (faster)
 bash android/install.sh
+
+# Option B: build native wheels on-device (no remote machine needed)
+bash android/install.sh --build-native
 ```
 
 ## Phone Setup (Termux prerequisites)
