@@ -80,6 +80,8 @@ Hermes has two entry points: start the terminal UI with `hermes`, or run the gat
 
 For the full command lists, see the [CLI guide](https://hermes-agent.nousresearch.com/docs/user-guide/cli) and the [Messaging Gateway guide](https://hermes-agent.nousresearch.com/docs/user-guide/messaging).
 
+> **Termux note:** `hermes gateway install` currently supports systemd/launchd only. On Android/Termux, use runit via `termux-services` — see [`android/README.md`](android/README.md#running-gateway-as-a-termux-service-runit).
+
 ---
 
 ## Documentation
