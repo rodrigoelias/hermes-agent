@@ -421,6 +421,59 @@ class TestKillPortProcess:
              patch("gateway.platforms.whatsapp.subprocess.run", side_effect=OSError("no netstat")):
             _kill_port_process(3000)  # must not raise
 
+    def test_falls_back_to_pkill_on_fuser_permission_denied(self):
+        from gateway.platforms.whatsapp import _kill_port_process
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[0] == "fuser":
+                return MagicMock(returncode=1, stderr="Permission denied")
+            if cmd[0] == "pkill":
+                return MagicMock()
+            return MagicMock()
+
+        with patch("gateway.platforms.whatsapp._IS_WINDOWS", False), \
+             patch("gateway.platforms.whatsapp.subprocess.run", side_effect=run_side_effect) as mock_run:
+            _kill_port_process(3000)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["pkill", "-f", "whatsapp-bridge/bridge.js"] in calls
+        assert ["pkill", "-f", "node bridge.js"] in calls
+        assert ["fuser", "-k", "3000/tcp"] not in calls
+
+    def test_falls_back_to_pkill_on_any_fuser_nonzero_exit(self):
+        from gateway.platforms.whatsapp import _kill_port_process
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[0] == "fuser":
+                return MagicMock(returncode=1, stderr="")
+            if cmd[0] == "pkill":
+                return MagicMock()
+            return MagicMock()
+
+        with patch("gateway.platforms.whatsapp._IS_WINDOWS", False), \
+             patch("gateway.platforms.whatsapp.subprocess.run", side_effect=run_side_effect) as mock_run:
+            _kill_port_process(3000)
+
+        calls = [c.args[0] for c in mock_run.call_args_list]
+        assert ["pkill", "-f", "whatsapp-bridge/bridge.js"] in calls
+        assert ["pkill", "-f", "node bridge.js"] in calls
+        assert ["fuser", "-k", "3000/tcp"] not in calls
+
+    def test_pkill_subprocess_error_suppressed(self):
+        import subprocess
+        from gateway.platforms.whatsapp import _kill_port_process
+
+        def run_side_effect(cmd, **kwargs):
+            if cmd[0] == "fuser":
+                return MagicMock(returncode=1, stderr="Permission denied")
+            if cmd[0] == "pkill":
+                raise subprocess.SubprocessError("pkill failed")
+            return MagicMock()
+
+        with patch("gateway.platforms.whatsapp._IS_WINDOWS", False), \
+             patch("gateway.platforms.whatsapp.subprocess.run", side_effect=run_side_effect):
+            _kill_port_process(3000)  # must not raise
+
 
 # ---------------------------------------------------------------------------
 # Persistent HTTP session lifecycle
